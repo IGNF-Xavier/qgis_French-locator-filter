@@ -90,7 +90,12 @@ class GpfDynamicGeocoder(GpfRestApiGeocoder):
             str: request url query
         """
         indexes = ",".join(self.active_indexes)
-        return f"{self.plg_settings.request_url_query}&index={indexes}"
+        # returntruegeometry=true: needed for viewport_from_truegeometry() below
+        # to have anything to read (parcel/poi indexes), at no extra request cost
+        return (
+            f"{self.plg_settings.request_url_query}"
+            f"&index={indexes}&returntruegeometry=true"
+        )
 
     def get_reverse_geocode_query(self, feature: QgsFeature) -> Optional[str]:
         """Get query for reverse geocode
@@ -115,16 +120,17 @@ class GpfDynamicGeocoder(GpfRestApiGeocoder):
         # index instead (at least 1), so e.g. a single active "address" index
         # returns only the closest address.
         limit = f"&limit={max(1, len(active_indexes))}"
+        index_and_geometry = f"&index={indexes}&returntruegeometry=true"
         center = geometry.centroid().asPoint()
         if geometry.type() == Qgis.GeometryType.Point:
             point = geometry.asPoint()
-            return f"&lon={point.x()}&lat={point.y()}&index={indexes}{limit}"
+            return f"&lon={point.x()}&lat={point.y()}{index_and_geometry}{limit}"
         elif geometry.type() == Qgis.GeometryType.Polygon:
             return (
                 f"searchgeom={geometry.asJson()}&lon={center.x()}"
-                f"&lat={center.y()}&index={indexes}{limit}"
+                f"&lat={center.y()}{index_and_geometry}{limit}"
             )
-        return f"&lon={center.x()}&lat={center.y()}&index={indexes}{limit}"
+        return f"&lon={center.x()}&lat={center.y()}{index_and_geometry}{limit}"
 
     def maximum_result_for_inverse_geocoding(self) -> int:
         """Maximum result for an inverse geocoding

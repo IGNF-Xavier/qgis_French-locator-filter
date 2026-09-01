@@ -338,7 +338,10 @@ class GpfChainedGeocoder(GpfRestApiGeocoder):
         """
         if parcel_feature is None:
             parcel_features = self._wfs_client.get_features(
-                WFS_PARCELLE, cql_filter=_cql_equals("idu", idu), count=1, feedback=feedback
+                WFS_PARCELLE,
+                cql_filter=self._cql_idu_near_point(idu, fallback_point),
+                count=1,
+                feedback=feedback,
             )
             parcel_feature = parcel_features[0] if parcel_features else None
 
@@ -404,6 +407,36 @@ class GpfChainedGeocoder(GpfRestApiGeocoder):
             )
             for building in buildings
         ]
+
+    def _cql_idu_near_point(self, idu: str, point: QgsPointXY) -> str:
+        """Build a CQL filter combining an idu equality with a bbox constraint
+        around a nearby point.
+
+        The PCI `parcelle` layer's `idu` field has no index for a fast
+        attribute-only lookup on this ~100M-feature layer - verified live,
+        an idu-only CQL_FILTER times out (same issue found on BDTOPO's
+        `cleabs`). This WFS also rejects combining the `bbox=` URL parameter
+        with `cql_filter=` ("mutually exclusive"), so the spatial bound has
+        to be embedded directly in the CQL expression via BBOX() - verified
+        live to be fast. The margin is generous (500m) since it only needs
+        to comfortably contain the target parcel around a point known to be
+        on or near it (an address, or another entity already linked to it),
+        not to pinpoint it - the idu equality still does the exact match.
+
+        :param idu: cadastral parcel identifier
+        :type idu: str
+        :param point: point known to be on or near the parcel (EPSG:4326)
+        :type point: QgsPointXY
+        :return: CQL filter expression
+        :rtype: str
+        """
+        crs = QgsCoordinateReferenceSystem("EPSG:4326")
+        rect = self.create_rectangle_around_point(crs, point, 500, 500)
+        return (
+            f"{_cql_equals('idu', idu)} AND BBOX(geom,"
+            f"{rect.yMinimum()},{rect.xMinimum()},"
+            f"{rect.yMaximum()},{rect.xMaximum()})"
+        )
 
     def _intersecting_candidates(
         self,
@@ -762,7 +795,9 @@ class GpfChainedGeocoder(GpfRestApiGeocoder):
             if parcel_idu not in parcel_geometries:
                 parcel_features = self._wfs_client.get_features(
                     WFS_PARCELLE,
-                    cql_filter=_cql_equals("idu", parcel_idu),
+                    cql_filter=self._cql_idu_near_point(
+                        parcel_idu, result.geometry().asPoint()
+                    ),
                     count=1,
                     feedback=feedback,
                 )

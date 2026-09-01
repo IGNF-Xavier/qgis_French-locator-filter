@@ -49,6 +49,25 @@ class GpfRnbGeocoder(RestAPIGeocoder):
         super().__init__()
         self.max_request_per_second = 10
         self._address_geocoder = FrenchBanGeocoder()
+        # real building footprints (RNB "shape") from the last search, keyed
+        # by rnb_id: kept as an opt-in cache rather than the result's own
+        # geometry, since QgsBatchGeocodeAlgorithm always creates a
+        # Point-typed output sink regardless of a geocoder's declared
+        # wkbType() (verified live) and silently drops any non-Point result -
+        # used by geometry_for_result() to load the real shape on demand
+        self._geometry_cache: Dict[str, QgsGeometry] = {}
+
+    def geometry_for_result(self, result: QgsGeocoderResult) -> Optional[QgsGeometry]:
+        """Get the real building footprint behind a result, if it had one
+        recorded (see __init__)
+
+        :param result: a result previously returned by this geocoder
+        :type result: QgsGeocoderResult
+        :return: real polygon geometry, None if not available
+        :rtype: Optional[QgsGeometry]
+        """
+        rnb_id = result.additionalAttributes().get("rnb_id")
+        return self._geometry_cache.get(rnb_id) if rnb_id else None
 
     def set_last_request_timestamp(self, timestamp: int) -> None:
         """Define timestamp for last request
@@ -381,8 +400,19 @@ class GpfRnbGeocoder(RestAPIGeocoder):
         crs = QgsCoordinateReferenceSystem("EPSG:4326")
         res = QgsGeocoderResult(label, geom, crs)
 
+        # the real building footprint, when RNB returned one (not all buildings
+        # have a recorded shape): used for the viewport (a tight fit on the
+        # actual shape rather than a generic square) and cached for on-demand
+        # loading as its own layer - not as this result's own geometry, since
+        # QgsBatchGeocodeAlgorithm always creates a Point-typed output sink
+        # regardless of wkbType() and silently drops any non-Point result
+        # (verified live)
         shape_geom = self._building_geometry(building)
         if shape_geom:
+            shape_geom.convertToMultiType()
+            rnb_id = attributes.get("rnb_id")
+            if rnb_id:
+                self._geometry_cache[rnb_id] = shape_geom
             res.setViewport(shape_geom.boundingBox())
         else:
             res.setViewport(

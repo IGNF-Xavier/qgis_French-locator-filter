@@ -16,6 +16,19 @@ from french_locator_filter.processing.gpf_parcel_inverse_geocoder_batch_processi
 )
 from french_locator_filter.processing.provider import FrenchLocatorProcessingProvider
 
+TRUEGEOMETRY = {
+    "type": "Polygon",
+    "coordinates": [
+        [
+            [2.354, 48.852],
+            [2.355, 48.852],
+            [2.355, 48.853],
+            [2.354, 48.853],
+            [2.354, 48.852],
+        ]
+    ],
+}
+
 GPF_SRV_MOCK_RESPOND = {
     "type": "FeatureCollection",
     "features": [
@@ -35,6 +48,7 @@ GPF_SRV_MOCK_RESPOND = {
                 "_score": 1,
                 "_type": "parcel",
                 "distance": 3,
+                "truegeometry": TRUEGEOMETRY,
             },
         }
     ],

@@ -23,6 +23,28 @@ from french_locator_filter.toolbelt.network_manager import NetworkRequestsManage
 class GpfParcelGeocoder(GpfRestApiGeocoder):
     """Geocoder for the cadastral parcel index of the Géoplateforme API"""
 
+    def __init__(self):
+        super().__init__()
+        # real parcel polygons (truegeometry) from the last search, keyed by
+        # the parcel's "id": kept as an opt-in cache rather than the result's
+        # own geometry, since QgsBatchGeocodeAlgorithm always creates a
+        # Point-typed output sink regardless of a geocoder's declared
+        # wkbType() (verified live) and silently drops any non-Point result -
+        # used by geometry_for_result() to load the real shape on demand
+        self._geometry_cache: Dict[str, QgsGeometry] = {}
+
+    def geometry_for_result(self, result: QgsGeocoderResult) -> Optional[QgsGeometry]:
+        """Get the real parcel polygon behind a result, if it was resolved
+        during the last search (see __init__)
+
+        :param result: a result previously returned by this geocoder
+        :type result: QgsGeocoderResult
+        :return: real polygon geometry, None if not available
+        :rtype: Optional[QgsGeometry]
+        """
+        parcel_id = result.additionalAttributes().get("id")
+        return self._geometry_cache.get(parcel_id) if parcel_id else None
+
     @property
     def _attributes(self) -> Dict[str, QMetaType.Type]:
         """Get attributes to read from REST API properties.
@@ -63,7 +85,10 @@ class GpfParcelGeocoder(GpfRestApiGeocoder):
         Returns:
             str: request url query
         """
-        return f"{self.plg_settings.request_url_query}&index=parcel"
+        # returntruegeometry=true asks the API to include the parcel's real
+        # polygon (as "truegeometry") in the response properties, at no extra
+        # request cost - used as the result's own geometry, not just its viewport
+        return f"{self.plg_settings.request_url_query}&index=parcel&returntruegeometry=true"
 
     def get_reverse_geocode_query(self, feature: QgsFeature) -> Optional[str]:
         """Get query for reverse geocode
@@ -83,16 +108,17 @@ class GpfParcelGeocoder(GpfRestApiGeocoder):
             # an explicit limit, the API defaults to 10 results within its default
             # search radius, which returns many unrelated nearby parcels
             limit = f"&limit={self.maximum_result_for_inverse_geocoding()}"
+            index_and_geometry = "&index=parcel&returntruegeometry=true"
             if geometry.type() == Qgis.GeometryType.Point:
                 point = geometry.asPoint()
-                query = f"&lon={point.x()}&lat={point.y()}&index=parcel{limit}"
+                query = f"&lon={point.x()}&lat={point.y()}{index_and_geometry}{limit}"
             elif geometry.type() == Qgis.GeometryType.Polygon:
                 query = (
                     f"searchgeom={geometry.asJson()}&lon={center.x()}"
-                    f"&lat={center.y()}&index=parcel{limit}"
+                    f"&lat={center.y()}{index_and_geometry}{limit}"
                 )
             else:
-                query = f"&lon={center.x()}&lat={center.y()}&index=parcel{limit}"
+                query = f"&lon={center.x()}&lat={center.y()}{index_and_geometry}{limit}"
             return query
         return None
 
@@ -128,7 +154,20 @@ class GpfParcelGeocoder(GpfRestApiGeocoder):
         for attribute, _ in self._attributes.items():
             attributes[attribute] = properties.get(attribute, None)
 
-        viewport = self.viewport_from_truegeometry(properties, crs)
+        # the real parcel polygon, when the API returned one (returntruegeometry=true):
+        # used for the viewport (a tight fit on the actual shape rather than a
+        # generic square) and cached for on-demand loading as its own layer -
+        # not as this result's own geometry, since QgsBatchGeocodeAlgorithm
+        # always creates a Point-typed output sink regardless of wkbType()
+        # and silently drops any non-Point result (verified live)
+        true_geom = self.geometry_from_geojson(properties.get("truegeometry"))
+        if true_geom:
+            true_geom.convertToMultiType()
+            parcel_id = attributes.get("id")
+            if parcel_id:
+                self._geometry_cache[parcel_id] = true_geom
+
+        viewport = true_geom.boundingBox() if true_geom else None
         if viewport is None:
             viewport = self.create_rectangle_around_point(crs, QgsPointXY(x, y), 200, 200)
         res.setViewport(viewport)
@@ -161,7 +200,10 @@ class GpfParcelGeocoder(GpfRestApiGeocoder):
         :return: list of matching parcels
         :rtype: List[QgsGeocoderResult]
         """
-        query = f"q=&index=parcel&departmentcode={departmentcode}&municipalitycode={municipalitycode}"
+        query = (
+            "q=&index=parcel&returntruegeometry=true"
+            f"&departmentcode={departmentcode}&municipalitycode={municipalitycode}"
+        )
         if section:
             query += f"&section={section}"
         if number:

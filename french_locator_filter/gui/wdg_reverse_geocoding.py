@@ -30,7 +30,10 @@ from french_locator_filter.gui.mdl_geocoder_result import QgsGeocoderResultModel
 from french_locator_filter.toolbelt.chained_provenance_layers import (
     add_provenance_layers,
 )
-from french_locator_filter.toolbelt.geocoder_result_layer import add_results_as_layer
+from french_locator_filter.toolbelt.geocoder_result_layer import (
+    add_real_geometry_layer,
+    add_results_as_layer,
+)
 from french_locator_filter.toolbelt.rnb_tile_layer import add_rnb_vector_tile_layer
 
 
@@ -61,7 +64,15 @@ class ReverseGeocodingWidget(QWidget):
         )
         self.btn_load_provenance.clicked.connect(self._load_provenance_layers)
         self.btn_load_provenance.setEnabled(False)
+
+        self.btn_load_real_geometry.setIcon(
+            QIcon(":/images/themes/default/mActionCreateMemory.svg")
+        )
+        self.btn_load_real_geometry.clicked.connect(self._load_real_geometry_layer)
+        self.btn_load_real_geometry.setEnabled(False)
+
         self.cbx_geocoder.currentIndexChanged.connect(self._update_provenance_button)
+        self.cbx_geocoder.currentIndexChanged.connect(self._update_real_geometry_button)
 
         self.wdg_selection.set_marker_color(QColor("green"))
 
@@ -90,6 +101,7 @@ class ReverseGeocodingWidget(QWidget):
             GpfChainedGeocoder(),
         )
         self._update_provenance_button()
+        self._update_real_geometry_button()
 
     def _update_provenance_button(self) -> None:
         """Enable "Charger les géométries par provenance" only for the chained
@@ -97,6 +109,17 @@ class ReverseGeocodingWidget(QWidget):
         parcel, buildings) to visualize per result"""
         self.btn_load_provenance.setEnabled(
             isinstance(self.cbx_geocoder.currentData(), GpfChainedGeocoder)
+        )
+
+    def _update_real_geometry_button(self) -> None:
+        """Enable "Charger la géométrie réelle" only for geocoders exposing a
+        cached real (parcel/building) geometry - their results stay
+        Point-geometried themselves (QgsBatchGeocodeAlgorithm always creates
+        a Point-typed output sink regardless of a geocoder's declared
+        wkbType() and silently drops any non-Point result, verified live)"""
+        geocoder = self.cbx_geocoder.currentData()
+        self.btn_load_real_geometry.setEnabled(
+            isinstance(geocoder, (GpfParcelGeocoder, GpfRnbGeocoder))
         )
 
     def _reverse_geocoding(self) -> None:
@@ -166,4 +189,23 @@ class ReverseGeocodingWidget(QWidget):
 
         add_provenance_layers(
             self._result_geocoder, rows, self.tr("Fiche complète - géométries")
+        )
+
+    def _load_real_geometry_layer(self) -> None:
+        """Load the currently displayed parcel/RNB building results as a
+        polygon layer, using each geocoder's cached real geometry"""
+        if not isinstance(self._result_geocoder, (GpfParcelGeocoder, GpfRnbGeocoder)):
+            return
+
+        results = []
+        for row in range(0, self.mdl_result.rowCount()):
+            geocoder_result = self.mdl_result.data(
+                self.mdl_result.index(row, self.mdl_result.IDENTIFIER_COL),
+                Qt.ItemDataRole.UserRole,
+            )
+            if geocoder_result:
+                results.append(geocoder_result)
+
+        add_real_geometry_layer(
+            self._result_geocoder, results, self.tr("Géométrie réelle")
         )

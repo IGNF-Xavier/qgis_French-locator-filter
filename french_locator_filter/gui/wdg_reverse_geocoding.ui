@@ -57,6 +57,13 @@
      </property>
     </widget>
    </item>
+   <item row="5" column="0" colspan="3">
+    <widget class="QPushButton" name="btn_load_real_geometry">
+     <property name="text">
+      <string>Charger la géométrie réelle (parcelle/bâtiment)</string>
+     </property>
+    </widget>
+   </item>
   </layout>
  </widget>
  <customwidgets>
